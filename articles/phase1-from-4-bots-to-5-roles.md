@@ -31,6 +31,16 @@
 
 它不是概念图，而是一套已经被真实任务验证过的实现方案。
 
+### 五层结构总览图
+
+```mermaid
+flowchart TD
+    A[组织层<br/>岗位定义 / owner / 边界] --> B[协作协议层<br/>委派 / 回传 / 升级 / 共享文件]
+    B --> C[能力层<br/>10 大能力模块 / 16 项 skills / A-B-C 分层]
+    C --> D[ITTO 执行层<br/>9 份执行文件 / 流程模板 / 检查机制]
+    D --> E[知识层<br/>MEMORY / memory / knowledge / shared]
+```
+
 ---
 
 ## 架构设计：五层结构为什么必要
@@ -48,6 +58,31 @@
 - `research`：研究、检索、情报沉淀
 
 这里的关键不是“会什么”，而是“负责什么”。角色一旦按 owner 设计，协作成本会明显下降。
+
+### 五岗分工与协作关系图
+
+```mermaid
+flowchart LR
+    main[main<br/>总控 / 委派 / 验收 / 收口]
+    smart[smart<br/>分析 / 判断 / 推演]
+    tools[tools<br/>工程执行 / 系统落地]
+    imagine[imagine<br/>表达 / 内容 / 包装]
+    research[research<br/>检索 / 研究 / 情报]
+
+    main --> smart
+    main --> tools
+    main --> imagine
+    main --> research
+    smart --> main
+    tools --> main
+    imagine --> main
+    research --> main
+
+    smart -.分析支撑.-> tools
+    research -.情报输入.-> smart
+    research -.素材输入.-> imagine
+    tools -.执行反馈.-> smart
+```
 
 ### 2. 协作协议层：解决多 Agent 最常见的失控问题
 
@@ -136,6 +171,32 @@ workspace-xxx/
 └── knowledge/
 ```
 
+更接近实际落地的根文件树如下：
+
+```text
+/home/max/.openclaw/workspace-main/
+├── AGENTS.md
+├── IDENTITY.md
+├── SOUL.md
+├── TOOLS.md
+├── USER.md
+├── MEMORY.md
+├── STATUS.md
+├── HEARTBEAT.md
+├── memory/
+│   ├── 2026-03-16.md
+│   ├── system/
+│   ├── groups/
+│   └── roles/
+├── knowledge/
+│   └── solo-company/
+└── shared/
+    ├── projects/
+    ├── research/
+    ├── drafts/
+    └── articles/
+```
+
 关键规则：
 
 - `AGENTS.md` 定义操作契约和协作规则
@@ -179,7 +240,29 @@ shared/
 建议下一步
 ```
 
+实际使用时，回传模板写成下面这样更适合直接复制：
+
+```markdown
+- 完成状态：已完成 / 部分完成 / 未完成
+- 核心结果：
+- 文件路径：`/path/to/result.md`
+- 遗留问题：
+- 风险提醒：
+- 建议下一步：
+```
+
 这比“做好了你看看”更适合团队运行。
+
+### 委派 → 执行 → 回传闭环流程图
+
+```mermaid
+flowchart LR
+    A[main 定义任务<br/>明确 owner / 目标 / 输出物] --> B[发送委派<br/>sessions_send / 群内定向]
+    B --> C[对应岗位执行<br/>smart / tools / imagine / research]
+    C --> D[结果入文件<br/>shared/projects or shared/articles]
+    D --> E[按模板回传<br/>状态 / 结果 / 路径 / 遗留]
+    E --> F[main 收口验收<br/>更新 STATUS / 决定下一步]
+```
 
 ## 三、能力实现：从清单到分层，而不是无限加工具
 
@@ -206,9 +289,55 @@ shared/
 - 启用 remote fallback：`OpenAI text-embedding-3-small`
 - 保留本地索引，等待未来无缝切回
 
+配套的安全基础配置也在后续运行期补上，例如 `loopDetection`：
+
+```json
+{
+  "tools.loopDetection": {
+    "enabled": true,
+    "historySize": 30,
+    "warningThreshold": 10,
+    "criticalThreshold": 20,
+    "globalCircuitBreakerThreshold": 30,
+    "detectors": {
+      "genericRepeat": true,
+      "knownPollNoProgress": true,
+      "pingPong": true
+    }
+  }
+}
+```
+
+这段配置的含义是：
+
+- 10 次重复触发警告
+- 20 次重复触发阻断
+- 30 次无进展触发全局熔断
+- 同时检测重复调用、无进展轮询、agent 间 ping-pong
+
 这个决策体现的是一人公司非常重要的原则：稳定可用优先于局部优雅。
 
-## 五、协作验证：必须通过真实任务回归测试
+## 五、执行自动化：把 Observe / Inspect 变成持续运行机制
+
+一期关注的是架构底座，二期开始把一些机制变成定时运行的自动化动作。这类配置虽然属于后续运营层，但很适合说明一人公司系统如何从“建起来”走向“持续跑起来”。
+
+典型 cron 示例：
+
+```cron
+# Observe：每天 23:00 提取 skill 调用记录
+0 23 * * * /home/max/.openclaw/workspace-main/scripts/skill-observe.sh >> /home/max/.openclaw/workspace-main/logs/skill-observe.log 2>&1
+
+# Inspect：每周一 10:00 分析 tool 成功/失败率并告警
+0 10 * * 1 /home/max/.openclaw/workspace-main/scripts/skill-inspect.sh >> /home/max/.openclaw/workspace-main/logs/skill-inspect.log 2>&1
+```
+
+这个模式的价值在于：
+
+- `Observe` 负责采集执行事实
+- `Inspect` 负责分析失败率和异常模式
+- 长期运行后，系统可以得到比单次聊天更稳定的运营视图
+
+## 六、协作验证：必须通过真实任务回归测试
 
 架构只有在真实链路里跑通，才算有效。
 
@@ -272,6 +401,23 @@ main 派任务
 - 里程碑：`9` 个，全部完成
 - memory 索引规模：`47` 文件 / `123` chunks
 - Telegram 群组：`6` 个（1 个总控群 + 5 个双人群）
+
+为了更直观看出一期变革的价值，可以把关键指标放在同一张对比表里：
+
+| 指标 | 变革前 | 变革后 |
+|---|---:|---:|
+| 岗位数 | 4 | 5 |
+| 组织形态 | 功能 bot 松散组合 | 五岗一人 AI 公司 |
+| 根文件体系 | 职责混杂 | 5 个 workspace × 5 份根文件 |
+| 长期制度文件 | 基本缺失 | 8 份 |
+| 协作协议层 | 无 | 已建立 |
+| 能力地图 | 模糊 | 10 大能力模块 |
+| skills 正式清单 | 未定稿 | 16 项 |
+| ITTO 执行文件 | 无成体系 | 9 份 |
+| 角色记忆 | 零散 | 6 份 |
+| 群组记忆 | 零散 | 7 份 |
+| 记忆检索 | 不稳定 | 47 文件 / 123 chunks + fallback |
+| 协作验证 | 靠手工转述 | 已完成真实闭环测试 |
 
 如果只用一句话总结这次实践，可以概括为：
 
